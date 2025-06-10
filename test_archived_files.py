@@ -1,40 +1,68 @@
 import os
+import shutil
 import zipfile
-import wget
+import pytest
+import csv
 
-pdffile_url = 'https://www.quickpickdeal.com/files/SamplePdf_61kb_1page.pdf'
-xlsxfile_url = 'https://www.quickpickdeal.com/files/Sample_Employee_data_xlsx.xlsx'
-csvfile_url = 'https://www.quickpickdeal.com/files/Sample100.csv'
+from pypdf import PdfReader
+from openpyxl import load_workbook
 
-def test_download_n_archive_files():
-    wget.download(pdffile_url, 'hw07.pdf')
-    wget.download(xlsxfile_url, 'hw07.xlsx')
-    wget.download(csvfile_url, 'hw07.csv')
+CURRENT_FILE = os.path.abspath(__file__)
+CURRENT_DIR = os.path.dirname(CURRENT_FILE)
+pdffile_withpath = os.path.abspath("tmp\\hw7.pdf")
+xlsxfile_withpath = os.path.abspath("tmp\\hw7.xlsx")
+csvfile_withpath = os.path.abspath("tmp\\hw7.csv")
 
-    pdffile_withpath = os.path.abspath("hw07.pdf")
-    xlsxfile_withpath = os.path.abspath("hw07.xlsx")
-    csvfile_withpath = os.path.abspath("hw07.csv")
+shutil.copy2(pdffile_withpath, CURRENT_DIR)
+shutil.copy2(xlsxfile_withpath, CURRENT_DIR)
+shutil.copy2(csvfile_withpath, CURRENT_DIR)
 
-    uncompressed_pdf_size = os.path.getsize(pdffile_withpath)
-    uncompressed_xlsx_size = os.path.getsize(xlsxfile_withpath)
-    uncompressed_csv_size = os.path.getsize(csvfile_withpath)
-
-    archfiles = [os.path.basename(pdffile_withpath),
-                os.path.basename(xlsxfile_withpath),
-                os.path.basename(csvfile_withpath)]
+@pytest.fixture
+def archive_file():
     archname = "archive.zip"
+    archfiles_list = [os.path.basename(pdffile_withpath),
+                      os.path.basename(xlsxfile_withpath),
+                      os.path.basename(csvfile_withpath)]
 
-    with zipfile.ZipFile(archname, "w") as zf:
-        for file in archfiles:
-            zf.write(file)
+    if not os.path.exists(archname):
+        with zipfile.ZipFile(archname, "w") as zf:
+            for file in archfiles_list:
+                zf.write(file)
 
-    with zipfile.ZipFile(archname, "r") as zf:
-        zipfile_list = zf.namelist()
+def test_pdffile_archive(archive_file):
+    reader = PdfReader(pdffile_withpath) # обращаемся к незапакованному pdf-файлу
+    page = reader.pages[0]  # получаем первую страницу
+    text = page.extract_text()  # извлекаем текст из первой страницы
 
-        pdfzipfile_size = zf.getinfo(zipfile_list[0]).file_size
-        xlsxzipfile_size = zf.getinfo(zipfile_list[1]).file_size
-        csvzipfile_size = zf.getinfo(zipfile_list[2]).file_size
+    with zipfile.ZipFile('archive.zip') as zf:
+        zipfile_list = (zf.namelist())
+        with zf.open((zipfile_list[0])) as pdffile:
+            zfreader = PdfReader(pdffile) # обращаемся к pdf-файлу в архиве
+            zfpage = zfreader.pages[0]
+            zftext = zfpage.extract_text()
+    assert zftext == text
 
-    assert pdfzipfile_size == uncompressed_pdf_size
-    assert xlsxzipfile_size == uncompressed_xlsx_size
-    assert csvzipfile_size == uncompressed_csv_size
+def test_xlsxfile_archive(archive_file):
+    workbook = load_workbook(xlsxfile_withpath)  # обращаемся к незапакованному xlsx-файлу
+    sheet = workbook.active  # получаем активный лист
+    cell_value = sheet.cell(row=3, column=2).value # получаем значение в ячейке
+
+    with zipfile.ZipFile('archive.zip') as zf:
+        zipfile_list = (zf.namelist())
+        with zf.open((zipfile_list[1])) as zfxlsxfile:
+            zfworkbook = load_workbook(zfxlsxfile) # обращаемся к xlsx-файлу в архиве
+            zfsheet = zfworkbook.active
+            zfcell_value = zfsheet.cell(row=3, column=2).value
+    assert zfcell_value == cell_value
+
+def test_csvfile_archive(archive_file):
+    with open(csvfile_withpath) as f:
+        reader = csv.reader(f) # обращаемся к незапакованному csv-файлу
+        readrow = [row for id, row in enumerate(reader) if id is 2] # читаем строку №2
+
+    with zipfile.ZipFile('archive.zip') as zf:
+        zipfile_list = (zf.namelist())
+        with open(zipfile_list[2]) as csvfile:
+            zfreader = csv.reader(csvfile)
+            zfreadrow = [row for id, row in enumerate(zfreader) if id is 2]
+    assert zfreadrow == readrow
